@@ -3,231 +3,94 @@ package parser
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"os"
-	"strings"
 )
 
-type Data struct {
-	Dtype  string
-	Number int
-	Str    string
-	List   []Data
-	Dict   map[string]Data
+type TorrentFile struct {
+	Length int
+	Path   []string
 }
 
-func ParseFile(path string) (Data, error) {
+type TorrentInfo struct {
+	Name        string
+	PieceLength int
+	Pieces      []byte
+	Length      int
+	Files       []TorrentFile
+}
+
+func ParseTorrent(path string) (TorrentInfo, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return Data{}, err
+		return TorrentInfo{}, err
 	}
 	defer file.Close()
 
-	r := bufio.NewReader(file)
-	value, err := ParseValue(r)
+	reader := bufio.NewReader(file)
+
+	value, err := DecodeValue(reader)
 	if err != nil {
-		return Data{}, err
+		return TorrentInfo{}, err
 	}
 
-	return value, nil
-}
-
-func ParseValue(reader *bufio.Reader) (Data, error) {
-	char, err := reader.ReadByte()
-	if err != nil {
-		return Data{}, err
+	if value.Dtype != "dict" {
+		return TorrentInfo{}, fmt.Errorf("torrent must be a dictionary")
 	}
 
-	switch char {
-	case 'i':
-		n, err := ParseInteger(reader)
-		if err != nil {
-			return Data{}, err
-		}
-		return Data{
-			Dtype:  "integer",
-			Number: n,
-		}, nil
-	case 'l':
-		list, err := ParseList(reader)
-		if err != nil {
-			return Data{}, err
-		}
-		return Data{
-			Dtype: "list",
-			List:  list,
-		}, nil
-	case 'd':
-		dict, err := ParseDict(reader)
-		if err != nil {
-			return Data{}, err
-		}
-		return Data{
-			Dtype: "dict",
-			Dict:  dict,
-		}, nil
-	default:
-		if char < '0' || char > '9' {
-			return Data{}, fmt.Errorf("invalid value start: %q", char)
-		}
-		if err := reader.UnreadByte(); err != nil {
-			return Data{}, err
-		}
-
-		str, err := ParseString(reader)
-		if err != nil {
-			return Data{}, err
-		}
-		return Data{
-			Dtype: "string",
-			Str:   str,
-		}, nil
-	}
-}
-
-func ParseInteger(reader *bufio.Reader) (int, error) {
-	num := 0
-
-	for {
-		b, err := reader.ReadByte()
-		if err != nil {
-			return 0, err
-		}
-
-		if b == 'e' {
-			break
-		}
-
-		if b < '0' || b > '9' {
-			return 0, fmt.Errorf("invalid integer character: %q", b)
-		}
-
-		num = num*10 + int(b-'0')
+	infoValue, ok := value.Dict["info"]
+	if !ok || infoValue.Dtype != "dict" {
+		return TorrentInfo{}, fmt.Errorf("torrent does not contain an info dictionary")
 	}
 
-	return num, nil
-}
+	info := infoValue.Dict
 
-func ParseLength(reader *bufio.Reader) (int, error) {
-	length := 0
+	var torrent TorrentInfo
 
-	for {
-		b, err := reader.ReadByte()
-		if err != nil {
-			return 0, err
-		}
-
-		if b == ':' {
-			return length, nil
-		}
-
-		if b < '0' || b > '9' {
-			return 0, fmt.Errorf("invalid integer character: %q", b)
-		}
-
-		length = length*10 + int(b-'0')
+	name, ok := info["name"]
+	if !ok || name.Dtype != "string" {
+		return TorrentInfo{}, fmt.Errorf("info dictionary has no valid name")
 	}
-}
+	torrent.Name = name.Str
 
-func ParseString(reader *bufio.Reader) (string, error) {
-	length, err := ParseLength(reader)
-	if err != nil {
-		return "", err
+	pieceLength, ok := info["piece length"]
+	if !ok || pieceLength.Dtype != "integer" {
+		return TorrentInfo{}, fmt.Errorf("info dictionary has no valid piece length")
+	}
+	torrent.PieceLength = pieceLength.Number
+
+	pieces, ok := info["pieces"]
+	if !ok || pieces.Dtype != "string" {
+		return TorrentInfo{}, fmt.Errorf("info dictionary has not valid pieces")
+	}
+	torrent.Pieces = []byte(pieces.Str)
+
+	if length, ok := info["length"]; ok {
+		torrent.Length = length.Number
 	}
 
-	result := make([]byte, length)
+	if files, ok := info["files"]; ok {
+		for _, fileValue := range files.List {
+			lengthValue, ok := fileValue.Dict["length"]
+			if !ok {
+				return TorrentInfo{}, fmt.Errorf("file entry has no length")
+			}
 
-	if _, err := io.ReadFull(reader, result); err != nil {
-		return "", err
+			pathValue, ok := fileValue.Dict["path"]
+			if !ok || pathValue.Dtype != "list" {
+				return TorrentInfo{}, fmt.Errorf("file entry has no valid path")
+			}
+
+			filePath := make([]string, len(pathValue.List))
+			for i, part := range pathValue.List {
+				filePath[i] = part.Str
+			}
+
+			torrent.Files = append(torrent.Files, TorrentFile{
+				Length: lengthValue.Number,
+				Path:   filePath,
+			})
+		}
 	}
 
-	return string(result), nil
-}
-
-func ParseList(reader *bufio.Reader) ([]Data, error) {
-	var result []Data
-
-	for {
-		b, err := reader.ReadByte()
-		if err != nil {
-			return nil, err
-		}
-
-		if b == 'e' {
-			return result, nil
-		}
-
-		if err := reader.UnreadByte(); err != nil {
-			return nil, err
-		}
-
-		value, err := ParseValue(reader)
-		if err != nil {
-			return nil, err
-		}
-
-		result = append(result, value)
-	}
-}
-
-func ParseDict(reader *bufio.Reader) (map[string]Data, error) {
-	result := make(map[string]Data)
-
-	for {
-		b, err := reader.ReadByte()
-		if err != nil {
-			return nil, err
-		}
-
-		if b == 'e' {
-			return result, nil
-		}
-
-		if b < '0' || b > '9' {
-			return nil, fmt.Errorf("dictionary key must be a string, got %q", b)
-		}
-
-		if err := reader.UnreadByte(); err != nil {
-			return nil, err
-		}
-
-		key, err := ParseString(reader)
-		if err != nil {
-			return nil, err
-		}
-
-		val, err := ParseValue(reader)
-		if err != nil {
-			return nil, err
-		}
-
-		result[key] = val
-	}
-}
-
-func ShowValue(value Data, indent int) {
-	depth := strings.Repeat(" ", indent)
-
-	switch value.Dtype {
-	case "integer":
-		fmt.Printf("%s%d\n", depth, value.Number)
-
-	case "string":
-		fmt.Printf("%s%q\n", depth, value.Str)
-
-	case "list":
-		fmt.Printf("%s[\n", depth)
-		for _, val := range value.List {
-			ShowValue(val, indent+4)
-		}
-		fmt.Printf("%s  ]\n", depth)
-
-	case "dict":
-		fmt.Printf("%s{\n", depth)
-		for key, val := range value.Dict {
-			fmt.Printf("%s  %s: ", depth, key)
-			ShowValue(val, indent)
-		}
-		fmt.Printf("%s}\n", depth)
-	}
+	return torrent, nil
 }
