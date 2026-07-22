@@ -1,6 +1,7 @@
 package tracker
 
 import (
+	"context"
 	crand "crypto/rand"
 	"encoding/binary"
 	"fmt"
@@ -10,7 +11,8 @@ import (
 	"time"
 )
 
-type Client struct {
+type UDPTracker struct {
+	Address    *net.UDPAddr
 	conn       *net.UDPConn
 	connID     uint64
 	downloaded uint64
@@ -18,13 +20,8 @@ type Client struct {
 	uploaded   uint64
 }
 
-func NewClient(serverAddress string) (*Client, error) {
-	parsed, err := url.Parse(serverAddress)
-	if err != nil {
-		return nil, err
-	}
-
-	address, err := net.ResolveUDPAddr("udp4", parsed.Host)
+func NewUDPTracker(url *url.URL) (*UDPTracker, error) {
+	address, err := net.ResolveUDPAddr("udp4", url.Host)
 	if err != nil {
 		return nil, fmt.Errorf("resolve UDP tracker: %w", err)
 	}
@@ -36,13 +33,18 @@ func NewClient(serverAddress string) (*Client, error) {
 
 	conn.SetReadDeadline(time.Now().Add(15 * time.Second))
 
-	return &Client{
-		conn:   conn,
-		connID: 0,
+	return &UDPTracker{
+		Address: address,
+		conn:    conn,
+		connID:  0,
 	}, nil
 }
 
-func (c *Client) Connect() error {
+func (c *UDPTracker) Announce(ctx context.Context, request AnnounceRequest) (AnnounceResponse, error) {
+	return AnnounceResponse{}, nil
+}
+
+func (c *UDPTracker) Connect() error {
 	txnID := rand.Uint32()
 
 	buf := make([]byte, 16)
@@ -103,11 +105,11 @@ func (c *Client) Connect() error {
 	return nil
 }
 
-func (c *Client) SetLeft(left uint64) {
+func (c *UDPTracker) SetLeft(left uint64) {
 	c.left = left
 }
 
-func (c *Client) SendAnnounce(infoHash [20]byte) error {
+func (c *UDPTracker) SendAnnounce(infoHash [20]byte) error {
 	const announceRequestSize = 98
 
 	peerID, err := GeneratePeerID()
@@ -202,6 +204,6 @@ func (c *Client) SendAnnounce(infoHash [20]byte) error {
 	return nil
 }
 
-func (c *Client) Close() error {
+func (c *UDPTracker) Close() error {
 	return c.conn.Close()
 }
