@@ -8,7 +8,9 @@ import (
 )
 
 func TestParseTorrent_MultiFile(t *testing.T) {
-	content := "d4:infod5:filesl" +
+	content := "d" +
+		"8:announce31:http://tracker.example/announce" +
+		"4:infod5:filesl" +
 		"d6:lengthi100e4:pathl4:docs10:README.txtee" +
 		"d6:lengthi200e4:pathl3:src7:main.goee" +
 		"e" +
@@ -29,6 +31,7 @@ func TestParseTorrent_MultiFile(t *testing.T) {
 	require.NoError(t, err)
 
 	expected := TorrentInfo{
+		Announce:    "http://tracker.example/announce",
 		Name:        "project",
 		PieceLength: 16384,
 		Pieces:      []byte("12345678901234567890"),

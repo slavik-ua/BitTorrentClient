@@ -1,96 +1,119 @@
 package parser
 
 import (
-	"bufio"
+	"crypto/sha1"
 	"fmt"
 	"os"
 )
 
 type TorrentFile struct {
-	Length int
+	Length int64
 	Path   []string
 }
 
 type TorrentInfo struct {
+	Announce    string
 	Name        string
-	PieceLength int
+	PieceLength int64
 	Pieces      []byte
-	Length      int
+	Length      int64
 	Files       []TorrentFile
+	InfoRaw     []byte
+	Hash        [20]byte
 }
 
 func ParseTorrent(path string) (TorrentInfo, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return TorrentInfo{}, err
-	}
-	defer file.Close()
-
-	reader := bufio.NewReader(file)
-
-	value, err := DecodeValue(reader)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return TorrentInfo{}, err
 	}
 
-	if value.Dtype != "dict" {
-		return TorrentInfo{}, fmt.Errorf("torrent must be a dictionary")
+	// reader := bufio.NewReader(file)
+
+	parser := NewBencodeParser(data)
+
+	value, err := parser.ParseValue()
+	if err != nil {
+		return TorrentInfo{}, err
 	}
 
-	infoValue, ok := value.Dict["info"]
-	if !ok || infoValue.Dtype != "dict" {
+	root, ok := value.(Dict)
+	if !ok {
+		return TorrentInfo{}, fmt.Errorf("torrent root must be a dictionary")
+	}
+
+	info, ok := root["info"].(Dict)
+	if !ok {
 		return TorrentInfo{}, fmt.Errorf("torrent does not contain an info dictionary")
 	}
 
-	info := infoValue.Dict
-
 	var torrent TorrentInfo
 
-	name, ok := info["name"]
-	if !ok || name.Dtype != "string" {
+	announce, ok := root["announce"].(String)
+	if !ok {
+		return TorrentInfo{}, fmt.Errorf("value dictionary has not annouce")
+	}
+	torrent.Announce = string(announce)
+
+	name, ok := info["name"].(String)
+	if !ok {
 		return TorrentInfo{}, fmt.Errorf("info dictionary has no valid name")
 	}
-	torrent.Name = name.Str
+	torrent.Name = string(name)
 
-	pieceLength, ok := info["piece length"]
-	if !ok || pieceLength.Dtype != "integer" {
+	pieceLength, ok := info["piece length"].(Integer)
+	if !ok {
 		return TorrentInfo{}, fmt.Errorf("info dictionary has no valid piece length")
 	}
-	torrent.PieceLength = pieceLength.Number
+	torrent.PieceLength = int64(pieceLength)
 
-	pieces, ok := info["pieces"]
-	if !ok || pieces.Dtype != "string" {
-		return TorrentInfo{}, fmt.Errorf("info dictionary has not valid pieces")
+	pieces, ok := info["pieces"].(String)
+	if !ok {
+		return TorrentInfo{}, fmt.Errorf("info dictionary has no valid pieces")
 	}
-	torrent.Pieces = []byte(pieces.Str)
+	torrent.Pieces = []byte(pieces)
 
-	if length, ok := info["length"]; ok {
-		torrent.Length = length.Number
+	if length, ok := info["length"].(Integer); ok {
+		torrent.Length = int64(length)
 	}
 
-	if files, ok := info["files"]; ok {
-		for _, fileValue := range files.List {
-			lengthValue, ok := fileValue.Dict["length"]
+	if files, ok := info["files"].(List); ok {
+		for _, item := range files {
+			fileDict, ok := item.(Dict)
 			if !ok {
-				return TorrentInfo{}, fmt.Errorf("file entry has no length")
+				return TorrentInfo{}, fmt.Errorf("file dictionary has no valid pieces")
 			}
 
-			pathValue, ok := fileValue.Dict["path"]
-			if !ok || pathValue.Dtype != "list" {
+			lengthValue, ok := fileDict["length"].(Integer)
+			if !ok {
+				return TorrentInfo{}, fmt.Errorf("file entry has no valid length")
+			}
+
+			pathValue, ok := fileDict["path"].(List)
+			if !ok {
 				return TorrentInfo{}, fmt.Errorf("file entry has no valid path")
 			}
 
-			filePath := make([]string, len(pathValue.List))
-			for i, part := range pathValue.List {
-				filePath[i] = part.Str
+			filePath := make([]string, len(pathValue))
+			for i, part := range pathValue {
+				pathPart, ok := part.(String)
+				if !ok {
+					return TorrentInfo{}, fmt.Errorf("file path element %d must be a string", i)
+				}
+				filePath[i] = string(pathPart)
 			}
 
 			torrent.Files = append(torrent.Files, TorrentFile{
-				Length: lengthValue.Number,
+				Length: int64(lengthValue),
 				Path:   filePath,
 			})
 		}
 	}
+
+	infoRaw := parser.GetInfo()
+	torrent.InfoRaw = infoRaw
+
+	torrent.Hash = sha1.Sum(infoRaw)
 
 	return torrent, nil
 }

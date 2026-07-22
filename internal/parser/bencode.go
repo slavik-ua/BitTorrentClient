@@ -1,84 +1,79 @@
 package parser
 
 import (
-	"bufio"
 	"fmt"
-	"io"
 	"strings"
 )
 
-type Data struct {
-	Dtype  string
-	Number int
-	Str    string
-	List   []Data
-	Dict   map[string]Data
+type Value interface {
+	isBencodeValue()
 }
 
-func DecodeValue(reader *bufio.Reader) (Data, error) {
-	char, err := reader.ReadByte()
-	if err != nil {
-		return Data{}, err
-	}
+type Integer int
 
-	switch char {
+func (Integer) isBencodeValue() {}
+
+type String string
+
+func (String) isBencodeValue() {}
+
+type List []Value
+
+func (List) isBencodeValue() {}
+
+type Dict map[string]Value
+
+func (Dict) isBencodeValue() {}
+
+type BencodeParser struct {
+	data      []byte
+	pos       int
+	infoStart int
+	infoEnd   int
+}
+
+func NewBencodeParser(data []byte) *BencodeParser {
+	return &BencodeParser{
+		data: data,
+	}
+}
+
+func (p *BencodeParser) ParseValue() (Value, error) {
+	b := p.data[p.pos]
+	p.pos++
+
+	switch b {
 	case 'i':
-		n, err := ParseInteger(reader)
-		if err != nil {
-			return Data{}, err
-		}
-		return Data{
-			Dtype:  "integer",
-			Number: n,
-		}, nil
+		n, err := p.ParseInteger()
+		return Integer(n), err
 	case 'l':
-		list, err := ParseList(reader)
-		if err != nil {
-			return Data{}, err
-		}
-		return Data{
-			Dtype: "list",
-			List:  list,
-		}, nil
+		return p.ParseList()
 	case 'd':
-		dict, err := ParseDict(reader)
-		if err != nil {
-			return Data{}, err
-		}
-		return Data{
-			Dtype: "dict",
-			Dict:  dict,
-		}, nil
+		return p.ParseDict()
 	default:
-		if char < '0' || char > '9' {
-			return Data{}, fmt.Errorf("invalid value start: %q", char)
-		}
-		if err := reader.UnreadByte(); err != nil {
-			return Data{}, err
+		if b < '0' || b > '9' {
+			return nil, fmt.Errorf("invalid value start: %q", b)
 		}
 
-		str, err := ParseString(reader)
-		if err != nil {
-			return Data{}, err
-		}
-		return Data{
-			Dtype: "string",
-			Str:   str,
-		}, nil
+		p.pos--
+		str, err := p.ParseString()
+		return String(str), err
 	}
 }
 
-func ParseInteger(reader *bufio.Reader) (int, error) {
+func (p *BencodeParser) ParseInteger() (int, error) {
 	num := 0
+	negative := false
 
 	for {
-		b, err := reader.ReadByte()
-		if err != nil {
-			return 0, err
-		}
-
+		b := p.data[p.pos]
+		p.pos++
 		if b == 'e' {
 			break
+		}
+		if b == '-' {
+			negative = true
+			continue
 		}
 
 		if b < '0' || b > '9' {
@@ -88,17 +83,19 @@ func ParseInteger(reader *bufio.Reader) (int, error) {
 		num = num*10 + int(b-'0')
 	}
 
+	if negative {
+		return -num, nil
+	}
+
 	return num, nil
 }
 
-func ParseLength(reader *bufio.Reader) (int, error) {
+func (p *BencodeParser) ParseLength() (int, error) {
 	length := 0
 
 	for {
-		b, err := reader.ReadByte()
-		if err != nil {
-			return 0, err
-		}
+		b := p.data[p.pos]
+		p.pos++
 
 		if b == ':' {
 			return length, nil
@@ -112,39 +109,30 @@ func ParseLength(reader *bufio.Reader) (int, error) {
 	}
 }
 
-func ParseString(reader *bufio.Reader) (string, error) {
-	length, err := ParseLength(reader)
+func (p *BencodeParser) ParseString() (string, error) {
+	length, err := p.ParseLength()
 	if err != nil {
 		return "", err
 	}
 
-	result := make([]byte, length)
-
-	if _, err := io.ReadFull(reader, result); err != nil {
-		return "", err
-	}
+	result := p.data[p.pos : p.pos+length]
+	p.pos += length
 
 	return string(result), nil
 }
 
-func ParseList(reader *bufio.Reader) ([]Data, error) {
-	var result []Data
+func (p *BencodeParser) ParseList() (List, error) {
+	var result List
 
 	for {
-		b, err := reader.ReadByte()
-		if err != nil {
-			return nil, err
-		}
+		b := p.data[p.pos]
 
 		if b == 'e' {
+			p.pos++
 			return result, nil
 		}
 
-		if err := reader.UnreadByte(); err != nil {
-			return nil, err
-		}
-
-		value, err := DecodeValue(reader)
+		value, err := p.ParseValue()
 		if err != nil {
 			return nil, err
 		}
@@ -153,16 +141,14 @@ func ParseList(reader *bufio.Reader) ([]Data, error) {
 	}
 }
 
-func ParseDict(reader *bufio.Reader) (map[string]Data, error) {
-	result := make(map[string]Data)
+func (p *BencodeParser) ParseDict() (Dict, error) {
+	result := make(Dict)
 
 	for {
-		b, err := reader.ReadByte()
-		if err != nil {
-			return nil, err
-		}
+		b := p.data[p.pos]
 
 		if b == 'e' {
+			p.pos++
 			return result, nil
 		}
 
@@ -170,44 +156,52 @@ func ParseDict(reader *bufio.Reader) (map[string]Data, error) {
 			return nil, fmt.Errorf("dictionary key must be a string, got %q", b)
 		}
 
-		if err := reader.UnreadByte(); err != nil {
-			return nil, err
-		}
-
-		key, err := ParseString(reader)
+		key, err := p.ParseString()
 		if err != nil {
 			return nil, err
 		}
 
-		val, err := DecodeValue(reader)
+		if key == "info" {
+			p.infoStart = p.pos
+		}
+
+		val, err := p.ParseValue()
 		if err != nil {
 			return nil, err
+		}
+
+		if key == "info" {
+			p.infoEnd = p.pos
 		}
 
 		result[key] = val
 	}
 }
 
-func ShowValue(value Data, indent int) {
+func (p *BencodeParser) GetInfo() []byte {
+	return p.data[p.infoStart:p.infoEnd]
+}
+
+func ShowValue(value Value, indent int) {
 	depth := strings.Repeat(" ", indent)
 
-	switch value.Dtype {
-	case "integer":
-		fmt.Printf("%s%d\n", depth, value.Number)
+	switch v := value.(type) {
+	case Integer:
+		fmt.Printf("%s%d\n", depth, v)
 
-	case "string":
-		fmt.Printf("%s%q\n", depth, value.Str)
+	case String:
+		fmt.Printf("%s%q\n", depth, v)
 
-	case "list":
+	case List:
 		fmt.Printf("%s[\n", depth)
-		for _, val := range value.List {
+		for _, val := range v {
 			ShowValue(val, indent+4)
 		}
 		fmt.Printf("%s  ]\n", depth)
 
-	case "dict":
+	case Dict:
 		fmt.Printf("%s{\n", depth)
-		for key, val := range value.Dict {
+		for key, val := range v {
 			fmt.Printf("%s  %s: ", depth, key)
 			ShowValue(val, indent)
 		}
