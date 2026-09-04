@@ -138,6 +138,10 @@ func Dial(ctx context.Context, address net.TCPAddr, infoHash [20]byte, localPeer
 func (p *Peer) ReadPeerMessage() (*PeerMessage, error) {
 	var lengthBuf [4]byte
 
+	if err := p.conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		return nil, err
+	}
+
 	if _, err := io.ReadFull(p.conn, lengthBuf[:]); err != nil {
 		return nil, fmt.Errorf("read message length: %w", err)
 	}
@@ -232,6 +236,7 @@ func (p *Peer) ApplyMessage(msg *PeerMessage) error {
 		if len(msg.Payload) != len(p.bitfield) {
 			return fmt.Errorf("invalid bitfield length: %d", len(msg.Payload))
 		}
+		copy(p.bitfield, msg.Payload)
 	case MsgHave:
 		if len(msg.Payload) != 4 {
 			return fmt.Errorf("invalid have payload length: %d", len(msg.Payload))
@@ -259,6 +264,10 @@ func (p *Peer) SendRequest(pieceIndex uint32, begin uint32, blockLength uint32) 
 	binary.BigEndian.PutUint32(message[9:13], begin)
 	binary.BigEndian.PutUint32(message[13:17], blockLength)
 
+	if err := p.conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return err
+	}
+
 	if err := writeFull(p.conn, message); err != nil {
 		return fmt.Errorf("send block request: %w", err)
 	}
@@ -282,5 +291,8 @@ func (p *Peer) ParsePieceMessage(msg *PeerMessage) (uint32, uint32, []byte, erro
 }
 
 func (p *Peer) Close() error {
+	if p == nil || p.conn == nil {
+		return fmt.Errorf("p is nil")
+	}
 	return p.conn.Close()
 }
