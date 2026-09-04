@@ -78,7 +78,7 @@ func Dial(ctx context.Context, address net.TCPAddr, infoHash [20]byte, localPeer
 	copy(handshake[48:68], localPeerID[:])
 
 	dialer := net.Dialer{
-		Timeout: 5 * time.Second,
+		Timeout: 10 * time.Second,
 	}
 
 	conn, err := dialer.DialContext(ctx, "tcp", address.String())
