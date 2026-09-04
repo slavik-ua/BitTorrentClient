@@ -4,10 +4,13 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
-func ParseTorrent(path string) (TorrentInfo, error) {
-	data, err := os.ReadFile(path)
+func ParseTorrent(torrentPath []string) (TorrentInfo, error) {
+	completePath := filepath.Join(torrentPath...)
+
+	data, err := os.ReadFile(completePath)
 	if err != nil {
 		return TorrentInfo{}, err
 	}

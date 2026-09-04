@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	torrent, err := parser.ParseTorrent("movie.torrent")
+	torrent, err := parser.ParseTorrent([]string{"local.torrent"})
 	if err != nil {
 		panic(fmt.Errorf("parse torrent: %w", err))
 	}
