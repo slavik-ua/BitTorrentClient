@@ -1,0 +1,87 @@
+services:
+  tracker:
+    image: ryjer/opentracker
+    container_name: torrent-tracker
+    ports:
+      - "6969:6969"       # HTTP tracker (your http.go:85 path)
+      - "6969:6969/udp"   # UDP tracker (your udp.go:40 path)
+    networks:
+      - torrent
+    restart: unless-stopped
+
+  peer1:
+    image: lscr.io/linuxserver/transmission:4.1.3
+    container_name: torrent-peer1
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Lisbon
+      - PEERPORT=51413
+    volumes:
+      - ./peer1/config:/config
+      - ./peer1/downloads:/downloads
+      - ./peer1/watch:/watch
+      # seed data will be copied here after torrent creation
+    ports:
+      - "9091:9091"   # transmission web UI peer1
+      - "51413:51413"
+      - "51413:51413/udp"
+    networks:
+      - torrent
+    depends_on:
+      - tracker
+    restart: unless-stopped
+
+  peer2:
+    image: lscr.io/linuxserver/transmission:4.1.3
+    container_name: torrent-peer2
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Lisbon
+      - PEERPORT=51414
+    volumes:
+      - ./peer2/config:/config
+      - ./peer2/downloads:/downloads
+      - ./peer2/watch:/watch
+    ports:
+      - "9092:9091"   # web UI peer2 -> host 9092
+      - "51414:51413"
+      - "51414:51413/udp"
+    networks:
+      - torrent
+    depends_on:
+      - tracker
+    restart: unless-stopped
+
+  peer3:
+    image: lscr.io/linuxserver/transmission:4.1.3
+    container_name: torrent-peer3
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Lisbon
+      - PEERPORT=51415
+    volumes:
+      - ./peer3/config:/config
+      - ./peer3/downloads:/downloads
+      - ./peer3/watch:/watch
+    ports:
+      - "9093:9091"
+      - "51415:51413"
+      - "51415:51413/udp"
+    networks:
+      - torrent
+    depends_on:
+      - tracker
+    restart: unless-stopped
+
+networks:
+  torrent:
+    name: torrent
