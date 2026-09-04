@@ -123,32 +123,63 @@ func (h *HTTPTracker) Announce(ctx context.Context, request AnnounceRequest) (An
 	}
 
 	// Peers
-	peersString, ok := root["peers"].(parser.String)
+	// peersString, ok := root["peers"].(parser.String)
+	// if !ok {
+	// 	return AnnounceResponse{}, fmt.Errorf("cannot convert peers string")
+	// }
+
+	peersVal, ok := root["peers"]
 	if !ok {
-		return AnnounceResponse{}, fmt.Errorf("cannot convert peers string")
+		return AnnounceResponse{}, fmt.Errorf("peers do not exist")
 	}
 
-	peers, err := ParseCompactPeers([]byte(peersString))
-	if err != nil {
-		return AnnounceResponse{}, fmt.Errorf("peer parse error: %w", err)
+	var peers []*net.TCPAddr
+
+	switch v := peersVal.(type) {
+	case parser.String:
+		peers, err = ParseCompactPeers([]byte(v))
+		if err != nil {
+			return AnnounceResponse{}, fmt.Errorf("peer parse error: %w", err)
+		}
+	case parser.List:
+		for _, item := range v {
+			item, ok := item.(parser.Dict)
+			if !ok {
+				return AnnounceResponse{}, fmt.Errorf("cannot convert to dict: %v", item)
+			}
+			ip, ok := item["ip"].(parser.String)
+			if !ok {
+				return AnnounceResponse{}, fmt.Errorf("cannot convert ip to string: %v", item["ip"])
+			}
+			port, ok := item["port"].(parser.Integer)
+			if !ok {
+				return AnnounceResponse{}, fmt.Errorf("cannot convert port to integer: %v", item["port"])
+			}
+			if port < 0 || port > 65535 {
+				return AnnounceResponse{}, fmt.Errorf("port is not in between 0 and 65535: %v", port)
+			}
+			peers = append(peers, &net.TCPAddr{IP: net.ParseIP(string(ip)), Port: int(port)})
+		}
+	default:
+		return AnnounceResponse{}, fmt.Errorf("cannot convert peersVal: %v", peersVal)
 	}
 
-	// Complete
-	complete := 0
+	// Seeders
+	seeders := 0
 	if value, ok := root["complete"].(parser.Integer); ok {
-		complete = int(value)
+		seeders = int(value)
 	}
 
-	// Incomplete
-	incomplete := 0
+	// Leechers
+	leechers := 0
 	if value, ok := root["incomplete"].(parser.Integer); ok {
-		incomplete = int(value)
+		leechers = int(value)
 	}
 
 	return AnnounceResponse{
-		Interval:   time.Duration(duration) * time.Second,
-		Peers:      peers,
-		Complete:   complete,
-		Incomplete: incomplete,
+		Interval: time.Duration(duration) * time.Second,
+		Peers:    peers,
+		Seeders:  seeders,
+		Leechers: leechers,
 	}, nil
 }
