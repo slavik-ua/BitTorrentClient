@@ -59,18 +59,18 @@ type AnnounceRequest struct {
 	InfoHash   [20]byte
 	PeerID     [20]byte
 	Port       uint16
-	Uploaded   int64
-	Downloaded int64
-	Left       int64
+	Uploaded   uint64
+	Downloaded uint64
+	Left       uint64
 	Event      Event
-	NumWant    int
+	NumWant    uint32
 }
 
 type AnnounceResponse struct {
-	Interval   time.Duration
-	Peers      []*net.TCPAddr
-	Complete   int
-	Incomplete int
+	Interval time.Duration
+	Peers    []*net.TCPAddr
+	Seeders  int
+	Leechers int
 }
 
 type Tracker interface {
