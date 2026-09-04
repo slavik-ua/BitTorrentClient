@@ -52,13 +52,13 @@ func (h *HTTPTracker) buildAnnounceURL(request AnnounceRequest) *url.URL {
 
 	query := trackerURL.Query()
 	query.Set("port", strconv.FormatUint(uint64(request.Port), 10))
-	query.Set("uploaded", strconv.FormatInt(request.Uploaded, 10))
-	query.Set("downloaded", strconv.FormatInt(request.Downloaded, 10))
-	query.Set("left", strconv.FormatInt(request.Left, 10))
+	query.Set("uploaded", strconv.FormatUint(request.Uploaded, 10))
+	query.Set("downloaded", strconv.FormatUint(request.Downloaded, 10))
+	query.Set("left", strconv.FormatUint(request.Left, 10))
 	query.Set("compact", "1")
 
 	if request.NumWant != 0 {
-		query.Set("numwant", strconv.Itoa(request.NumWant))
+		query.Set("numwant", strconv.Itoa(int(request.NumWant)))
 	}
 
 	if event := request.Event.HTTPValue(); event != "" {
