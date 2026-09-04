@@ -58,7 +58,7 @@ func ParseTorrent(path string) (TorrentInfo, error) {
 	torrent.Pieces = []byte(pieces)
 
 	if length, ok := info["length"].(Integer); ok {
-		torrent.Length = int64(length)
+		torrent.Length = uint64(length)
 	}
 
 	if files, ok := info["files"].(List); ok {
@@ -88,7 +88,7 @@ func ParseTorrent(path string) (TorrentInfo, error) {
 			}
 
 			torrent.Files = append(torrent.Files, TorrentFile{
-				Length: int64(lengthValue),
+				Length: uint64(lengthValue),
 				Path:   filePath,
 			})
 		}

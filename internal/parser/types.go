@@ -1,7 +1,7 @@
 package parser
 
 type TorrentFile struct {
-	Length int64
+	Length uint64
 	Path   []string
 }
 
@@ -10,7 +10,7 @@ type TorrentInfo struct {
 	Name        string
 	PieceLength int64
 	Pieces      []byte
-	Length      int64
+	Length      uint64
 	Files       []TorrentFile
 	InfoRaw     []byte
 	Hash        [20]byte
