@@ -39,6 +39,29 @@ func ParseTorrent(path string) (TorrentInfo, error) {
 	}
 	torrent.Announce = string(announce)
 
+	if rawList, ok := root["announce-list"].(List); ok {
+		announceList := make([][]string, 0, len(rawList))
+		for _, list := range rawList {
+			innerList, ok := list.(List)
+			if !ok {
+				return TorrentInfo{}, fmt.Errorf("outer list does not have inner list")
+			}
+
+			innerUrls := make([]string, 0, len(innerList))
+			for _, val := range innerList {
+				url, ok := val.(String)
+				if !ok {
+					return TorrentInfo{}, fmt.Errorf("inner list url is not a string")
+				}
+				innerUrls = append(innerUrls, string(url))
+			}
+			announceList = append(announceList, innerUrls)
+		}
+		torrent.AnnounceList = announceList
+	} else {
+		torrent.AnnounceList = [][]string{{torrent.Announce}}
+	}
+
 	name, ok := info["name"].(String)
 	if !ok {
 		return TorrentInfo{}, fmt.Errorf("info dictionary has no valid name")

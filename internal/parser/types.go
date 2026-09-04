@@ -6,12 +6,13 @@ type TorrentFile struct {
 }
 
 type TorrentInfo struct {
-	Announce    string
-	Name        string
-	PieceLength int64
-	Pieces      []byte
-	Length      uint64
-	Files       []TorrentFile
-	InfoRaw     []byte
-	Hash        [20]byte
+	Announce     string
+	AnnounceList [][]string
+	Name         string
+	PieceLength  int64
+	Pieces       []byte
+	Length       uint64
+	Files        []TorrentFile
+	InfoRaw      []byte
+	Hash         [20]byte
 }
