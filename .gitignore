@@ -1,1 +1,7 @@
 *.torrent
+diagnoseTracker.sh
+*.bak
+peer*/
+seed/
+tracker-diagnostic*
+files/
