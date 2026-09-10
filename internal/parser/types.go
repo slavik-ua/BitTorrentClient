@@ -30,6 +30,20 @@ type FileExtent struct {
 }
 
 func (t *TorrentInfo) MapRange(globalOff, size uint64) []FileExtent {
+	if len(t.Files) == 0 {
+		if size == 0 || globalOff+size > t.Length {
+			return nil
+		}
+		return []FileExtent{
+			{
+				Path:      t.Name,
+				Offset:    globalOff,
+				Length:    size,
+				BufOffset: 0,
+			},
+		}
+	}
+
 	sizes := make([]uint64, len(t.Files)+1)
 	for i := range len(t.Files) {
 		sizes[i+1] = sizes[i] + t.Files[i].Length

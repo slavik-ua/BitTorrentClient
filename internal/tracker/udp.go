@@ -114,8 +114,8 @@ func (c *UDPTracker) Announce(ctx context.Context, request AnnounceRequest) (Ann
 	leechers := binary.BigEndian.Uint32(response[16:20])
 
 	fmt.Printf("Interval: %d\n", interval)
-	fmt.Printf("Leechers: %d\n", seeders)
-	fmt.Printf("Seeders: %d\n", leechers)
+	fmt.Printf("Leechers: %d\n", leechers)
+	fmt.Printf("Seeders: %d\n", seeders)
 
 	peerData := response[20:]
 	if len(peerData)%6 != 0 {
