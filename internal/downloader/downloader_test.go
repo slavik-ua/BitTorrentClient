@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha1"
 	"encoding/binary"
 	"math/rand"
@@ -102,7 +103,7 @@ func TestRun_DownloadsAllPieces(t *testing.T) {
 	d, data, dir := buildDownloader(t, rng, []int{10, 10, 4})
 
 	fake := &fakeConn{data: data, corrupt: map[int]int{}, has: func(int) bool { return true }}
-	require.NoError(t, d.run(fake, len(data)))
+	require.NoError(t, d.run(context.TODO(), fake, len(data)))
 
 	require.Equal(t, uint64(0), d.left)
 	require.Equal(t, uint64(24), d.downloaded)
@@ -124,7 +125,7 @@ func TestRun_RetriesCorruptPieces(t *testing.T) {
 		corrupt: map[int]int{0: 2, 2: 1},
 		has:     func(int) bool { return true },
 	}
-	require.NoError(t, d.run(fake, len(data)))
+	require.NoError(t, d.run(context.TODO(), fake, len(data)))
 
 	require.Equal(t, uint64(0), d.left)
 	require.Equal(t, 0, fake.corrupt[0], "corruption budget not consumed")
@@ -136,5 +137,16 @@ func TestRun_PeerWithoutPiecesErrors(t *testing.T) {
 	d, data, _ := buildDownloader(t, rng, []int{10, 10, 4})
 
 	fake := &fakeConn{data: data, has: func(int) bool { return false }}
-	require.Error(t, d.run(fake, len(data)))
+	require.Error(t, d.run(context.TODO(), fake, len(data)))
+}
+
+func TestRun_CanceledContextStops(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+	d, data, _ := buildDownloader(t, rng, []int{10, 10, 4})
+	fake := &fakeConn{data: data, has: func(i int) bool { return false }}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := d.run(ctx, fake, len(data))
+	require.ErrorIs(t, err, context.Canceled)
 }

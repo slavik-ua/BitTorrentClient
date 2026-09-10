@@ -147,9 +147,15 @@ func (d *Downloader) pieceSize(pieceIndex, pieceCount int) int64 {
 	return d.torrent.PieceLength
 }
 
-func (d *Downloader) fetchPiece(p peer.Conn, pieceIndex int, size int64) ([]byte, error) {
+func (d *Downloader) fetchPiece(ctx context.Context, p peer.Conn, pieceIndex int, size int64) ([]byte, error) {
 	buf := make([]byte, size)
 	for begin := 0; begin < int(size); {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
 		if p.IsChoked() {
 			if err := p.SendInterested(); err != nil {
 				return nil, fmt.Errorf("cannot send interested: %w", err)
@@ -215,8 +221,14 @@ func (d *Downloader) verifyAndStore(pieceIndex int, buf []byte) error {
 	return nil
 }
 
-func (d *Downloader) run(conn peer.Conn, pieceCount int) error {
+func (d *Downloader) run(ctx context.Context, conn peer.Conn, pieceCount int) error {
 	for d.left > 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		if err := conn.SendInterested(); err != nil {
 			return fmt.Errorf("cannot send interested: %w", err)
 		}
@@ -236,7 +248,7 @@ func (d *Downloader) run(conn peer.Conn, pieceCount int) error {
 
 		pieceSize := d.pieceSize(pieceIndex, pieceCount)
 
-		buf, err := d.fetchPiece(conn, pieceIndex, pieceSize)
+		buf, err := d.fetchPiece(ctx, conn, pieceIndex, pieceSize)
 		if err != nil {
 			d.unmark(pieceIndex)
 			return fmt.Errorf("cannot fetch piece: %w", err)
@@ -253,8 +265,8 @@ func (d *Downloader) run(conn peer.Conn, pieceCount int) error {
 	return nil
 }
 
-func (d *Downloader) ConnectToPeer(peerClient *net.TCPAddr) error {
-	peerCtx, peerCancel := context.WithTimeout(context.Background(), 30*time.Second)
+func (d *Downloader) ConnectToPeer(ctx context.Context, peerClient *net.TCPAddr) error {
+	peerCtx, peerCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer peerCancel()
 
 	pieceCount := len(d.torrent.Pieces) / 20
@@ -268,5 +280,5 @@ func (d *Downloader) ConnectToPeer(peerClient *net.TCPAddr) error {
 
 	fmt.Printf("CONNECTED: %v\n", ip)
 
-	return d.run(connectedPeer, pieceCount)
+	return d.run(peerCtx, connectedPeer, pieceCount)
 }

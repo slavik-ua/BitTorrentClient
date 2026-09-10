@@ -1,7 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 	"torrentClient/internal/downloader"
 )
 
@@ -15,9 +19,12 @@ func main() {
 		panic(err)
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	for _, p := range downloader.Peers {
 		fmt.Printf("Trying peer %s ...\n", p.String())
-		err = downloader.ConnectToPeer(p)
+		err = downloader.ConnectToPeer(ctx, p)
 		if err != nil {
 			fmt.Printf("peer %s failed: %v (trying next)\n", p.String(), err)
 			continue
