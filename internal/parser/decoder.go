@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -38,9 +39,20 @@ func NewBencodeParser(data []byte) *BencodeParser {
 	}
 }
 
-func (p *BencodeParser) ParseValue() (Value, error) {
+func (p *BencodeParser) readByte() (byte, error) {
+	if p.pos > len(p.data) {
+		return 0, io.ErrUnexpectedEOF
+	}
 	b := p.data[p.pos]
 	p.pos++
+	return b, nil
+}
+
+func (p *BencodeParser) ParseValue() (Value, error) {
+	b, err := p.readByte()
+	if err != nil {
+		return nil, err
+	}
 
 	switch b {
 	case 'i':
@@ -66,8 +78,11 @@ func (p *BencodeParser) ParseInteger() (int, error) {
 	negative := false
 
 	for {
-		b := p.data[p.pos]
-		p.pos++
+		b, err := p.readByte()
+		if err != nil {
+			return 0, err
+		}
+
 		if b == 'e' {
 			break
 		}
@@ -94,8 +109,10 @@ func (p *BencodeParser) ParseLength() (int, error) {
 	length := 0
 
 	for {
-		b := p.data[p.pos]
-		p.pos++
+		b, err := p.readByte()
+		if err != nil {
+			return 0, err
+		}
 
 		if b == ':' {
 			return length, nil
@@ -115,8 +132,18 @@ func (p *BencodeParser) ParseString() (string, error) {
 		return "", err
 	}
 
-	result := p.data[p.pos : p.pos+length]
-	p.pos += length
+	if length < 0 || p.pos+length > len(p.data) {
+		return "", io.ErrUnexpectedEOF
+	}
+
+	result := make([]byte, length)
+	for i := range length {
+		b, err := p.readByte()
+		if err != nil {
+			return "", err
+		}
+		result[i] = b
+	}
 
 	return string(result), nil
 }
@@ -125,13 +152,16 @@ func (p *BencodeParser) ParseList() (List, error) {
 	var result List
 
 	for {
-		b := p.data[p.pos]
+		b, err := p.readByte()
+		if err != nil {
+			return nil, err
+		}
 
 		if b == 'e' {
-			p.pos++
 			return result, nil
 		}
 
+		p.pos--
 		value, err := p.ParseValue()
 		if err != nil {
 			return nil, err
@@ -145,13 +175,16 @@ func (p *BencodeParser) ParseDict() (Dict, error) {
 	result := make(Dict)
 
 	for {
-		b := p.data[p.pos]
+		b, err := p.readByte()
+		if err != nil {
+			return nil, err
+		}
 
 		if b == 'e' {
-			p.pos++
 			return result, nil
 		}
 
+		p.pos--
 		if b < '0' || b > '9' {
 			return nil, fmt.Errorf("dictionary key must be a string, got %q", b)
 		}
