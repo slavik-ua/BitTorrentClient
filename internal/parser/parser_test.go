@@ -30,22 +30,21 @@ func TestParseTorrent_MultiFile(t *testing.T) {
 	actual, err := ParseTorrent(file.Name())
 	require.NoError(t, err)
 
-	expected := TorrentInfo{
-		Announce:    "http://tracker.example/announce",
-		Name:        "project",
-		PieceLength: 16384,
-		Pieces:      []byte("12345678901234567890"),
-		Files: []TorrentFile{
-			{
-				Length: 100,
-				Path:   []string{"docs", "README.txt"},
-			},
-			{
-				Length: 200,
-				Path:   []string{"src", "main.go"},
-			},
+	require.Equal(t, "http://tracker.example/announce", actual.Announce)
+	require.Equal(t, [][]string{{"http://tracker.example/announce"}}, actual.AnnounceList)
+	require.Equal(t, "project", actual.Name)
+	require.Equal(t, int64(16384), actual.PieceLength)
+	require.Equal(t, []byte("12345678901234567890"), actual.Pieces)
+	require.Equal(t, []TorrentFile{
+		{
+			Length: 100,
+			Path:   []string{"docs", "README.txt"},
 		},
-	}
-
-	require.Equal(t, expected, actual)
+		{
+			Length: 200,
+			Path:   []string{"src", "main.go"},
+		},
+	}, actual.Files)
+	require.NotEmpty(t, actual.InfoRaw)
+	require.NotZero(t, actual.Hash)
 }
