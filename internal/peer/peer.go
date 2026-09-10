@@ -40,6 +40,18 @@ func (b Bitfield) SetPiece(pieceIndex int) error {
 	return nil
 }
 
+type Conn interface {
+	SendInterested() error
+	WaitUnchoke() error
+	HasPiece(pieceIndex int) bool
+	IsChoked() bool
+	ApplyMessage(msg *PeerMessage) error
+	SendRequest(pieceIndex, begin, blockLength uint32) error
+	ParsePieceMessage(msg *PeerMessage) (uint32, uint32, []byte, error)
+	ReadPeerMessage() (*PeerMessage, error)
+	Close() error
+}
+
 type Peer struct {
 	Address    net.TCPAddr
 	conn       net.Conn
@@ -68,7 +80,7 @@ const (
 	MsgCancel
 )
 
-func Dial(ctx context.Context, address net.TCPAddr, infoHash [20]byte, localPeerID [20]byte, pieceCount int) (*Peer, error) {
+func Dial(ctx context.Context, address net.TCPAddr, infoHash [20]byte, localPeerID [20]byte, pieceCount int) (Conn, error) {
 	handshake := make([]byte, 68)
 
 	handshake[0] = 19

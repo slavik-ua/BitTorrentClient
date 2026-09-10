@@ -147,7 +147,7 @@ func (d *Downloader) pieceSize(pieceIndex, pieceCount int) int64 {
 	return d.torrent.PieceLength
 }
 
-func (d *Downloader) fetchPiece(p *peer.Peer, pieceIndex int, size int64) ([]byte, error) {
+func (d *Downloader) fetchPiece(p peer.Conn, pieceIndex int, size int64) ([]byte, error) {
 	buf := make([]byte, size)
 	for begin := 0; begin < int(size); {
 		if p.IsChoked() {
@@ -215,6 +215,44 @@ func (d *Downloader) verifyAndStore(pieceIndex int, buf []byte) error {
 	return nil
 }
 
+func (d *Downloader) run(conn peer.Conn, pieceCount int) error {
+	for d.left > 0 {
+		if err := conn.SendInterested(); err != nil {
+			return fmt.Errorf("cannot send interested: %w", err)
+		}
+
+		if err := conn.WaitUnchoke(); err != nil {
+			return fmt.Errorf("cannot wait for unchoke: %w", err)
+		}
+
+		fmt.Println("Peer unchocked us")
+
+		pieceIndex := d.pickPiece(conn.HasPiece)
+		if pieceIndex == -1 {
+			return fmt.Errorf("peer does not have any piece")
+		}
+
+		fmt.Printf("peer has piece: %d\n", pieceIndex)
+
+		pieceSize := d.pieceSize(pieceIndex, pieceCount)
+
+		buf, err := d.fetchPiece(conn, pieceIndex, pieceSize)
+		if err != nil {
+			d.unmark(pieceIndex)
+			return fmt.Errorf("cannot fetch piece: %w", err)
+		}
+
+		if err := d.verifyAndStore(pieceIndex, buf); err != nil {
+			if errors.Is(err, ErrPieceMismatch) {
+				continue
+			}
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (d *Downloader) ConnectToPeer(peerClient *net.TCPAddr) error {
 	peerCtx, peerCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer peerCancel()
@@ -230,39 +268,5 @@ func (d *Downloader) ConnectToPeer(peerClient *net.TCPAddr) error {
 
 	fmt.Printf("CONNECTED: %v\n", ip)
 
-	for d.left > 0 {
-		if err := connectedPeer.SendInterested(); err != nil {
-			return fmt.Errorf("cannot send interested: %w", err)
-		}
-
-		if err := connectedPeer.WaitUnchoke(); err != nil {
-			return fmt.Errorf("cannot wait for unchoke: %w", err)
-		}
-
-		fmt.Println("Peer unchocked us")
-
-		pieceIndex := d.pickPiece(connectedPeer.HasPiece)
-		if pieceIndex == -1 {
-			return fmt.Errorf("peer does not have any piece")
-		}
-
-		fmt.Printf("peer has piece: %d\n", pieceIndex)
-
-		pieceSize := d.pieceSize(pieceIndex, pieceCount)
-
-		buf, err := d.fetchPiece(connectedPeer, pieceIndex, pieceSize)
-		if err != nil {
-			d.unmark(pieceIndex)
-			return fmt.Errorf("cannot fetch piece: %w", err)
-		}
-
-		if err := d.verifyAndStore(pieceIndex, buf); err != nil {
-			if errors.Is(err, ErrPieceMismatch) {
-				continue
-			}
-			return err
-		}
-	}
-
-	return nil
+	return d.run(connectedPeer, pieceCount)
 }
