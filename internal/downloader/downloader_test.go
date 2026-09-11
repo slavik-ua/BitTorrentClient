@@ -143,6 +143,59 @@ func TestRun_PeerWithoutPiecesErrors(t *testing.T) {
 	require.Error(t, d.run(context.TODO(), fake, len(data)))
 }
 
+func TestResume_MarksVerifiedPieces(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+	d, data, _ := buildDownloader(t, rng, []int{10, 10, 4})
+
+	require.Equal(t, uint64(24), d.left)
+
+	require.NoError(t, d.store.WritePiece(0, data[0]))
+	require.NoError(t, d.store.WritePiece(2, data[2]))
+
+	d.Resume(context.TODO())
+
+	require.True(t, d.Pieces[0], "piece 0 on disk, should resume")
+	require.False(t, d.Pieces[1], "piece 1 missing, must stay false")
+	require.True(t, d.Pieces[2], "piece 2 on disk, should resume")
+	require.Equal(t, uint64(10), d.left, "only piece 1, 10 bytes, left")
+	require.Equal(t, uint64(14), d.downloaded)
+	require.False(t, d.IsComplete())
+}
+
+func TestResume_FullDownloadCompletes(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+	d, data, _ := buildDownloader(t, rng, []int{10, 10, 4})
+
+	for i := range data {
+		require.NoError(t, d.store.WritePiece(i, data[i]))
+	}
+
+	d.Resume(context.TODO())
+
+	for i := range data {
+		require.True(t, d.Pieces[i], "piece %d not resumed", i)
+	}
+	require.Equal(t, uint64(0), d.left)
+	require.True(t, d.IsComplete())
+}
+
+func TestResume_CorruptOnDiskSkipped(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+	d, data, _ := buildDownloader(t, rng, []int{10, 10, 4})
+
+	require.NoError(t, d.store.WritePiece(0, data[0]))
+	bad := make([]byte, len(data[1]))
+	copy(bad, data[1])
+	bad[0] ^= 0xff
+	require.NoError(t, d.store.WritePiece(1, bad))
+
+	d.Resume(context.TODO())
+
+	require.True(t, d.Pieces[0])
+	require.False(t, d.Pieces[1], "corrupt piece must not resume")
+	require.Equal(t, uint64(14), d.left, "piece 1 + piece 2 remain")
+}
+
 func TestRun_CanceledContextStops(t *testing.T) {
 	rng := rand.New(rand.NewSource(42))
 	d, data, _ := buildDownloader(t, rng, []int{10, 10, 4})

@@ -38,13 +38,20 @@ func run() error {
 		PeerTimeout:     30 * time.Second,
 		Logger:          log,
 	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	d, err := downloader.NewDownloader(*torrentPath, *outDir, cfg)
 	if err != nil {
 		return err
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	d.Resume(ctx)
+	if d.IsComplete() {
+		log.Info("already completed, nothing to download")
+		return nil
+	}
 
 	if err := d.SendAnnounce(ctx); err != nil {
 		return err

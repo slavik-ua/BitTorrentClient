@@ -1,7 +1,9 @@
 package store
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"torrentClient/internal/parser"
@@ -93,4 +95,30 @@ func (s *Store) WritePiece(pieceIndex int, buf []byte) error {
 	}
 
 	return nil
+}
+
+func (s *Store) ReadPiece(pieceIndex int, size int64) ([]byte, error) {
+	buf := make([]byte, size)
+	globalOff := uint64(pieceIndex) * uint64(s.torrent.PieceLength)
+
+	for _, ext := range s.torrent.MapRange(globalOff, uint64(size)) {
+		path := filepath.Join(s.dir, ext.Path)
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, fmt.Errorf("open output file: %s %w", path, err)
+		}
+		n, rerr := f.ReadAt(buf[ext.BufOffset:ext.BufOffset+ext.Length], int64(ext.Offset))
+		cerr := f.Close()
+		if rerr != nil && !errors.Is(rerr, io.EOF) {
+			return nil, fmt.Errorf("read output file: %s %w", path, rerr)
+		}
+		if uint64(n) != ext.Length {
+			return nil, fmt.Errorf("short read: got %d, want %d", uint64(n), ext.Length)
+		}
+		if cerr != nil {
+			return nil, fmt.Errorf("close file: %s %w", path, cerr)
+		}
+	}
+
+	return buf, nil
 }

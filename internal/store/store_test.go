@@ -64,3 +64,16 @@ func TestWritePiece_PartialBufferWritesWhatItGets(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "AB", string(a[10:12]))
 }
+
+func TestReadPiece_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New(dir, MultiFileTorrent())
+	require.NoError(t, err)
+
+	raw := []byte("ABC")
+	require.NoError(t, s.WritePiece(0, raw))
+	data, err := s.ReadPiece(0, int64(len(raw)))
+	require.NoError(t, err)
+
+	require.Equal(t, raw, data)
+}

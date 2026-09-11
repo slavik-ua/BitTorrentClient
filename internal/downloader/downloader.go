@@ -71,14 +71,58 @@ func NewDownloader(torrentPath, outputPath string, cfg Config) (*Downloader, err
 	}, nil
 }
 
+func (d *Downloader) Resume(ctx context.Context) {
+	pieceCount := len(d.torrent.Pieces) / 20
+	if d.Pieces == nil {
+		d.Pieces = make([]bool, pieceCount)
+	}
+
+	for pieceIndex := range pieceCount {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		data, err := d.store.ReadPiece(pieceIndex, d.pieceSize(pieceIndex, pieceCount))
+		if err != nil {
+			continue
+		}
+
+		sum := sha1.Sum(data)
+		if actual := [20]byte(d.torrent.Pieces[pieceIndex*20 : (pieceIndex+1)*20]); sum != actual {
+			continue
+		}
+
+		d.Pieces[pieceIndex] = true
+		d.downloaded += uint64(len(data))
+		d.left -= uint64(len(data))
+	}
+}
+
+func (d *Downloader) IsComplete() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.left == 0
+}
+
 func (d *Downloader) SendAnnounce(ctx context.Context) error {
+	pieceCount := len(d.torrent.Pieces) / 20
+	if pieceCount == 0 {
+		return fmt.Errorf("torrent contains no piece hashes")
+	}
+
+	if d.left == 0 {
+		d.cfg.Logger.Info("all pieces already verified, skipping announce")
+		return nil
+	}
+
 	announceRequest := tracker.AnnounceRequest{
 		InfoHash:   d.torrent.Hash,
 		PeerID:     d.peerId,
 		Port:       d.cfg.ListenPort,
 		Uploaded:   0,
-		Downloaded: 0,
-		Left:       d.totalLength,
+		Downloaded: d.downloaded,
+		Left:       d.left,
 		Event:      tracker.EventStarted,
 		NumWant:    d.cfg.NumWant,
 	}
@@ -125,12 +169,6 @@ Out:
 		return fmt.Errorf("tracker returned no piece hashes")
 	}
 
-	pieceCount := len(d.torrent.Pieces) / 20
-	if pieceCount == 0 {
-		return fmt.Errorf("torrent contains no piece hashes")
-	}
-
-	d.Pieces = make([]bool, pieceCount)
 	d.trackerClient = trackerClient
 	d.Peers = announceResponse.Peers
 
