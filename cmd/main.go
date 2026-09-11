@@ -57,6 +57,44 @@ func run() error {
 		return err
 	}
 
+	start := time.Now()
+	tickDone := make(chan struct{})
+	defer close(tickDone)
+
+	go func() {
+		t := time.NewTicker(time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tickDone:
+				return
+			case <-t.C:
+				p := d.Progress()
+				elapsed := time.Since(start).Seconds()
+				rate := 0.0
+				if elapsed > 0 {
+					rate = float64(p.Downloaded) / elapsed
+				}
+				eta := "?"
+				if rate > 0 && p.Left > 0 {
+					eta = (time.Duration(float64(p.Left)/rate) * time.Second).Round(time.Second).String()
+				}
+				pct := 0.0
+				if p.Total > 0 {
+					pct = 100 * float64(p.Downloaded) / float64(p.Total)
+				}
+				log.Info("progress",
+					"pieces", fmt.Sprintf("%d/%d", p.DonePieces, p.TotalPieces),
+					"done", fmt.Sprintf("%.1f%%", pct),
+					"rate", fmt.Sprintf("%.1f MB/s", rate/1e6),
+					"eta", eta,
+				)
+			}
+		}
+	}()
+
 	for _, p := range d.Peers {
 		log.Info("trying peer", "addr", p.String())
 		if err := d.ConnectToPeer(ctx, p); err != nil {

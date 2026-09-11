@@ -41,6 +41,14 @@ type Downloader struct {
 	trackerClient tracker.Tracker
 }
 
+type Progress struct {
+	DonePieces  int
+	TotalPieces int
+	Downloaded  uint64
+	Left        uint64
+	Total       uint64
+}
+
 func NewDownloader(torrentPath, outputPath string, cfg Config) (*Downloader, error) {
 	torrent, err := parser.ParseTorrent(torrentPath)
 	if err != nil {
@@ -69,6 +77,26 @@ func NewDownloader(torrentPath, outputPath string, cfg Config) (*Downloader, err
 		store:       store,
 		cfg:         cfg,
 	}, nil
+}
+
+func (d *Downloader) Progress() Progress {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	done := 0
+	for _, ok := range d.Pieces {
+		if ok {
+			done++
+		}
+	}
+
+	return Progress{
+		DonePieces:  done,
+		TotalPieces: len(d.Pieces),
+		Downloaded:  d.downloaded,
+		Left:        d.left,
+		Total:       d.totalLength,
+	}
 }
 
 func (d *Downloader) Resume(ctx context.Context) {
