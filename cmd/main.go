@@ -26,6 +26,7 @@ func run() error {
 	torrentPath := flag.String("torrent", "file.torrent", "path .torrent file")
 	outDir := flag.String("out", "files", "output directory")
 	port := flag.Uint("port", 6881, "listen port to advertise")
+	maxPeers := flag.Int("maxPeers", 20, "max peers")
 	flag.Parse()
 
 	log := slog.Default()
@@ -36,6 +37,7 @@ func run() error {
 		BlockSize:       16384,
 		AnnounceTimeout: 20 * time.Second,
 		PeerTimeout:     30 * time.Second,
+		MaxPeers:        *maxPeers,
 		Logger:          log,
 	}
 
@@ -95,18 +97,12 @@ func run() error {
 		}
 	}()
 
-	for _, p := range d.Peers {
-		log.Info("trying peer", "addr", p.String())
-		if err := d.ConnectToPeer(ctx, p); err != nil {
-			log.Warn("peer failed, trying next", "addr", p.String(), "err", err)
-			continue
-		}
-		log.Info("peer succeeded", "addr", p.String())
-		return nil
-	}
 	if len(d.Peers) == 0 {
 		return fmt.Errorf("tracker returned no peers")
 	}
+	if err := d.Run(ctx); err != nil {
+		return err
+	}
 
-	return fmt.Errorf("all peers failed")
+	return nil
 }

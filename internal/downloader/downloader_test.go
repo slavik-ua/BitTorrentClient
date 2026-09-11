@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"torrentClient/internal/parser"
 	"torrentClient/internal/peer"
@@ -65,6 +66,17 @@ func (f *fakeConn) ReadPeerMessage() (*peer.PeerMessage, error) {
 	return &peer.PeerMessage{ID: byte(peer.MsgPiece), Payload: raw}, nil
 }
 
+func testConfig() Config {
+	return Config{
+		BlockSize:       4,
+		PeerTimeout:     30 * time.Second,
+		AnnounceTimeout: 20 * time.Second,
+		NumWant:         4,
+		MaxPeers:        20,
+		Logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+}
+
 func buildDownloader(t *testing.T, rng *rand.Rand, sizes []int) (*Downloader, [][]byte, string) {
 	t.Helper()
 
@@ -93,7 +105,7 @@ func buildDownloader(t *testing.T, rng *rand.Rand, sizes []int) (*Downloader, []
 	d := &Downloader{
 		torrent:     tr,
 		store:       s,
-		cfg:         Config{BlockSize: 4, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))},
+		cfg:         testConfig(),
 		totalLength: total,
 		left:        total,
 		Pieces:      make([]bool, len(sizes)),
@@ -106,7 +118,7 @@ func TestRun_DownloadsAllPieces(t *testing.T) {
 	d, data, dir := buildDownloader(t, rng, []int{10, 10, 4})
 
 	fake := &fakeConn{data: data, corrupt: map[int]int{}, has: func(int) bool { return true }}
-	require.NoError(t, d.run(context.TODO(), fake, len(data)))
+	require.NoError(t, d.runWorker(context.TODO(), fake, len(data)))
 
 	require.Equal(t, uint64(0), d.left)
 	require.Equal(t, uint64(24), d.downloaded)
@@ -128,7 +140,7 @@ func TestRun_RetriesCorruptPieces(t *testing.T) {
 		corrupt: map[int]int{0: 2, 2: 1},
 		has:     func(int) bool { return true },
 	}
-	require.NoError(t, d.run(context.TODO(), fake, len(data)))
+	require.NoError(t, d.runWorker(context.Background(), fake, len(data)))
 
 	require.Equal(t, uint64(0), d.left)
 	require.Equal(t, 0, fake.corrupt[0], "corruption budget not consumed")
@@ -140,7 +152,7 @@ func TestRun_PeerWithoutPiecesErrors(t *testing.T) {
 	d, data, _ := buildDownloader(t, rng, []int{10, 10, 4})
 
 	fake := &fakeConn{data: data, has: func(int) bool { return false }}
-	require.Error(t, d.run(context.TODO(), fake, len(data)))
+	require.ErrorIs(t, d.runWorker(context.Background(), fake, len(data)), ErrNoUsefulPieces)
 }
 
 func TestResume_MarksVerifiedPieces(t *testing.T) {
@@ -152,7 +164,7 @@ func TestResume_MarksVerifiedPieces(t *testing.T) {
 	require.NoError(t, d.store.WritePiece(0, data[0]))
 	require.NoError(t, d.store.WritePiece(2, data[2]))
 
-	d.Resume(context.TODO())
+	d.Resume(context.Background())
 
 	require.True(t, d.Pieces[0], "piece 0 on disk, should resume")
 	require.False(t, d.Pieces[1], "piece 1 missing, must stay false")
@@ -170,7 +182,7 @@ func TestResume_FullDownloadCompletes(t *testing.T) {
 		require.NoError(t, d.store.WritePiece(i, data[i]))
 	}
 
-	d.Resume(context.TODO())
+	d.Resume(context.Background())
 
 	for i := range data {
 		require.True(t, d.Pieces[i], "piece %d not resumed", i)
@@ -189,11 +201,26 @@ func TestResume_CorruptOnDiskSkipped(t *testing.T) {
 	bad[0] ^= 0xff
 	require.NoError(t, d.store.WritePiece(1, bad))
 
-	d.Resume(context.TODO())
+	d.Resume(context.Background())
 
 	require.True(t, d.Pieces[0])
 	require.False(t, d.Pieces[1], "corrupt piece must not resume")
 	require.Equal(t, uint64(14), d.left, "piece 1 + piece 2 remain")
+}
+
+func TestRunWorkers_SplitPieces(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+	d, data, dir := buildDownloader(t, rng, []int{10, 10, 10, 10})
+
+	even := &fakeConn{data: data, corrupt: map[int]int{}, has: func(i int) bool { return i%2 == 0 }}
+	odd := &fakeConn{data: data, corrupt: map[int]int{}, has: func(i int) bool { return i%2 == 1 }}
+
+	require.NoError(t, d.runWorkers(context.Background(), []peer.Conn{even, odd}, len(data)))
+
+	require.True(t, d.IsComplete())
+	raw, err := os.ReadFile(filepath.Join(dir, "f.bin"))
+	require.NoError(t, err)
+	require.Equal(t, bytes.Join(data, nil), raw)
 }
 
 func TestRun_CanceledContextStops(t *testing.T) {
@@ -203,6 +230,6 @@ func TestRun_CanceledContextStops(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := d.run(ctx, fake, len(data))
+	err := d.runWorker(ctx, fake, len(data))
 	require.ErrorIs(t, err, context.Canceled)
 }

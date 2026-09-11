@@ -22,6 +22,7 @@ type Config struct {
 	BlockSize       uint32
 	AnnounceTimeout time.Duration
 	PeerTimeout     time.Duration
+	MaxPeers        int
 	Logger          *slog.Logger
 }
 
@@ -239,12 +240,8 @@ func (d *Downloader) fetchPiece(ctx context.Context, p peer.Conn, pieceIndex int
 		}
 
 		if p.IsChoked() {
-			if err := p.SendInterested(); err != nil {
+			if err := d.SendAndWaitUnchoke(p); err != nil {
 				return nil, fmt.Errorf("cannot send interested: %w", err)
-			}
-
-			if err := p.WaitUnchoke(); err != nil {
-				return nil, fmt.Errorf("cannot wait for unchoke: %w", err)
 			}
 		}
 
@@ -303,27 +300,40 @@ func (d *Downloader) verifyAndStore(pieceIndex int, buf []byte) error {
 	return nil
 }
 
-func (d *Downloader) run(ctx context.Context, conn peer.Conn, pieceCount int) error {
-	for d.left > 0 {
+func (d *Downloader) SendAndWaitUnchoke(conn peer.Conn) error {
+	if err := conn.SendInterested(); err != nil {
+		return fmt.Errorf("cannot send interested: %w", err)
+	}
+
+	if err := conn.WaitUnchoke(); err != nil {
+		return fmt.Errorf("cannot wait for unchoke: %w", err)
+	}
+
+	d.cfg.Logger.Info("Peer unchocked us")
+
+	return nil
+}
+
+var ErrNoUsefulPieces = errors.New("no peer has remaining pieces")
+
+func (d *Downloader) runWorker(ctx context.Context, conn peer.Conn, pieceCount int) error {
+	if err := d.SendAndWaitUnchoke(conn); err != nil {
+		return fmt.Errorf("cannot send interested: %w", err)
+	}
+
+	for !d.IsComplete() {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
 
-		if err := conn.SendInterested(); err != nil {
-			return fmt.Errorf("cannot send interested: %w", err)
-		}
-
-		if err := conn.WaitUnchoke(); err != nil {
-			return fmt.Errorf("cannot wait for unchoke: %w", err)
-		}
-
-		d.cfg.Logger.Info("Peer unchocked us")
-
 		pieceIndex := d.pickPiece(conn.HasPiece)
 		if pieceIndex == -1 {
-			return fmt.Errorf("peer does not have any piece")
+			if d.IsComplete() {
+				return nil
+			}
+			return ErrNoUsefulPieces
 		}
 
 		d.cfg.Logger.Info("peer has piece", "pieceIndex", pieceIndex)
@@ -347,20 +357,83 @@ func (d *Downloader) run(ctx context.Context, conn peer.Conn, pieceCount int) er
 	return nil
 }
 
-func (d *Downloader) ConnectToPeer(ctx context.Context, peerClient *net.TCPAddr) error {
-	peerCtx, peerCancel := context.WithTimeout(ctx, d.cfg.PeerTimeout)
-	defer peerCancel()
+func (d *Downloader) runWorkers(ctx context.Context, conns []peer.Conn, pieceCount int) error {
+	errs := make(chan error, len(conns))
+	runCtx, cancel := context.WithTimeout(ctx, d.cfg.PeerTimeout)
+	defer cancel()
+	var wg sync.WaitGroup
+	for _, c := range conns {
+		wg.Add(1)
+		go func(conn peer.Conn) {
+			defer wg.Done()
+			defer conn.Close()
 
+			err := d.runWorker(runCtx, conn, pieceCount)
+			if errors.Is(err, ErrNoUsefulPieces) {
+				err = nil
+			} else if err != nil && !errors.Is(err, context.Canceled) {
+				cancel()
+			}
+			errs <- err
+		}(c)
+	}
+	wg.Wait()
+	close(errs)
+	if d.IsComplete() {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	for err := range errs {
+		if err != nil && !errors.Is(err, context.Canceled) {
+			return err
+		}
+	}
+
+	return ErrNoUsefulPieces
+}
+
+func (d *Downloader) Run(ctx context.Context) error {
 	pieceCount := len(d.torrent.Pieces) / 20
 
-	connectedPeer, err := peer.Dial(peerCtx, *peerClient, d.torrent.Hash, d.peerId, pieceCount)
-	ip := peerClient.IP.String()
-	if err != nil {
-		return fmt.Errorf("cannot connect to peer: %s, %w", ip, err)
+	var wg sync.WaitGroup
+	conns := make(chan peer.Conn, len(d.Peers))
+	n := min(d.cfg.MaxPeers, len(d.Peers))
+	if n < 0 {
+		n = 1
 	}
-	defer connectedPeer.Close()
+	peers := d.Peers[:n]
+	for _, p := range peers {
+		wg.Add(1)
+		go func(p *net.TCPAddr) {
+			defer wg.Done()
+			peerCtx, peerCancel := context.WithTimeout(ctx, d.cfg.PeerTimeout)
+			defer peerCancel()
 
-	d.cfg.Logger.Info("CONNECTED", "addr", ip)
+			d.cfg.Logger.Info("trying peer", "addr", p.String())
 
-	return d.run(peerCtx, connectedPeer, pieceCount)
+			connectedPeer, err := peer.Dial(peerCtx, *p, d.torrent.Hash, d.peerId, pieceCount)
+			ip := p.IP.String()
+			if err != nil {
+				d.cfg.Logger.Warn("cannot connect to peer", "addr", ip, "err", err)
+				return
+			}
+
+			d.cfg.Logger.Info("peer succeeded", "addr", p.String())
+			conns <- connectedPeer
+		}(p)
+	}
+	wg.Wait()
+	close(conns)
+
+	var connSlice []peer.Conn
+	for c := range conns {
+		connSlice = append(connSlice, c)
+	}
+	if len(connSlice) == 0 {
+		return fmt.Errorf("could not connect to any peer")
+	}
+	return d.runWorkers(ctx, connSlice, pieceCount)
 }
