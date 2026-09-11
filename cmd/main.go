@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,8 +13,11 @@ import (
 )
 
 func main() {
+	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})
+	slog.SetDefault(slog.New(handler))
+
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+		slog.Error("download failed", "err", err)
 		os.Exit(1)
 	}
 }
@@ -24,12 +28,15 @@ func run() error {
 	port := flag.Uint("port", 6881, "listen port to advertise")
 	flag.Parse()
 
+	log := slog.Default()
+
 	cfg := downloader.Config{
 		ListenPort:      uint16(*port),
 		NumWant:         4,
 		BlockSize:       16384,
 		AnnounceTimeout: 20 * time.Second,
 		PeerTimeout:     30 * time.Second,
+		Logger:          log,
 	}
 	d, err := downloader.NewDownloader(*torrentPath, *outDir, cfg)
 	if err != nil {
@@ -39,26 +46,22 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	err = d.SendAnnounce(ctx)
-	if err != nil {
+	if err := d.SendAnnounce(ctx); err != nil {
 		return err
 	}
 
 	for _, p := range d.Peers {
-		fmt.Printf("Trying peer %s ...\n", p.String())
-		err = d.ConnectToPeer(ctx, p)
-		if err != nil {
-			fmt.Printf("peer %s failed: %v (trying next)\n", p.String(), err)
+		log.Info("trying peer", "addr", p.String())
+		if err := d.ConnectToPeer(ctx, p); err != nil {
+			log.Warn("peer failed, trying next", "addr", p.String(), "err", err)
 			continue
 		}
-		fmt.Printf("Peer %s succeeded\n", p.String())
-		break
+		log.Info("peer succeeded", "addr", p.String())
+		return nil
 	}
-	if err != nil {
-		return fmt.Errorf("all peers failed: %w", err)
+	if len(d.Peers) == 0 {
+		return fmt.Errorf("tracker returned no peers")
 	}
 
-	fmt.Println("DONE")
-
-	return nil
+	return fmt.Errorf("all peers failed")
 }

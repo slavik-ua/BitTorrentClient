@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
@@ -21,6 +22,7 @@ type Config struct {
 	BlockSize       uint32
 	AnnounceTimeout time.Duration
 	PeerTimeout     time.Duration
+	Logger          *slog.Logger
 }
 
 type Downloader struct {
@@ -55,6 +57,10 @@ func NewDownloader(torrentPath, outputPath string, cfg Config) (*Downloader, err
 		return nil, fmt.Errorf("cannot create store: %w", err)
 	}
 
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
+
 	return &Downloader{
 		torrent:     torrent,
 		peerId:      peerId,
@@ -87,10 +93,10 @@ func (d *Downloader) SendAnnounce(ctx context.Context) error {
 Out:
 	for _, innerList := range d.torrent.AnnounceList {
 		for _, url := range innerList {
-			fmt.Println("HERE:", url)
+			d.cfg.Logger.Info("checking tracker url", "url", url)
 			trackerClient, err = tracker.New(url)
 			if err != nil {
-				fmt.Printf("cannot create tracker: %s, %v\n", url, err)
+				d.cfg.Logger.Warn("cannot create tracker", "url", url, "err", err)
 				continue
 			}
 			announceCtx, announceCancel = context.WithTimeout(ctx, d.cfg.AnnounceTimeout)
@@ -102,7 +108,7 @@ Out:
 			}
 
 			if err != nil {
-				fmt.Printf("could not send announce to %s, %v\n", url, err)
+				d.cfg.Logger.Warn("could not send announce", "url", url, "err", err)
 				continue
 			}
 
@@ -247,14 +253,14 @@ func (d *Downloader) run(ctx context.Context, conn peer.Conn, pieceCount int) er
 			return fmt.Errorf("cannot wait for unchoke: %w", err)
 		}
 
-		fmt.Println("Peer unchocked us")
+		d.cfg.Logger.Info("Peer unchocked us")
 
 		pieceIndex := d.pickPiece(conn.HasPiece)
 		if pieceIndex == -1 {
 			return fmt.Errorf("peer does not have any piece")
 		}
 
-		fmt.Printf("peer has piece: %d\n", pieceIndex)
+		d.cfg.Logger.Info("peer has piece", "pieceIndex", pieceIndex)
 
 		pieceSize := d.pieceSize(pieceIndex, pieceCount)
 
@@ -288,7 +294,7 @@ func (d *Downloader) ConnectToPeer(ctx context.Context, peerClient *net.TCPAddr)
 	}
 	defer connectedPeer.Close()
 
-	fmt.Printf("CONNECTED: %v\n", ip)
+	d.cfg.Logger.Info("CONNECTED", "addr", ip)
 
 	return d.run(peerCtx, connectedPeer, pieceCount)
 }

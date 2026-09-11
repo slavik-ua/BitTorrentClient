@@ -5,6 +5,8 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/binary"
+	"io"
+	"log/slog"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -91,10 +93,10 @@ func buildDownloader(t *testing.T, rng *rand.Rand, sizes []int) (*Downloader, []
 	d := &Downloader{
 		torrent:     tr,
 		store:       s,
+		cfg:         Config{BlockSize: 4, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))},
 		totalLength: total,
 		left:        total,
 		Pieces:      make([]bool, len(sizes)),
-		cfg:         Config{BlockSize: 4},
 	}
 	return d, data, dir
 }
