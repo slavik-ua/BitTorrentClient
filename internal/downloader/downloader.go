@@ -15,10 +15,19 @@ import (
 	"torrentClient/internal/tracker"
 )
 
+type Config struct {
+	ListenPort      uint16
+	NumWant         uint32
+	BlockSize       uint32
+	AnnounceTimeout time.Duration
+	PeerTimeout     time.Duration
+}
+
 type Downloader struct {
 	torrent     parser.TorrentInfo
 	peerId      [20]byte
 	store       *store.Store
+	cfg         Config
 	totalLength uint64
 	uploaded    uint64
 	downloaded  uint64
@@ -30,7 +39,7 @@ type Downloader struct {
 	trackerClient tracker.Tracker
 }
 
-func NewDownloader(torrentPath, outputPath string) (*Downloader, error) {
+func NewDownloader(torrentPath, outputPath string, cfg Config) (*Downloader, error) {
 	torrent, err := parser.ParseTorrent(torrentPath)
 	if err != nil {
 		return nil, fmt.Errorf("cannot parse torrent: %w", err)
@@ -52,19 +61,20 @@ func NewDownloader(torrentPath, outputPath string) (*Downloader, error) {
 		totalLength: store.TotalLength(),
 		left:        store.TotalLength(),
 		store:       store,
+		cfg:         cfg,
 	}, nil
 }
 
-func (d *Downloader) SendAnnounce() error {
+func (d *Downloader) SendAnnounce(ctx context.Context) error {
 	announceRequest := tracker.AnnounceRequest{
 		InfoHash:   d.torrent.Hash,
 		PeerID:     d.peerId,
-		Port:       6881,
+		Port:       d.cfg.ListenPort,
 		Uploaded:   0,
 		Downloaded: 0,
 		Left:       d.totalLength,
 		Event:      tracker.EventStarted,
-		NumWant:    4,
+		NumWant:    d.cfg.NumWant,
 	}
 
 	var trackerClient tracker.Tracker
@@ -83,7 +93,7 @@ Out:
 				fmt.Printf("cannot create tracker: %s, %v\n", url, err)
 				continue
 			}
-			announceCtx, announceCancel = context.WithTimeout(context.Background(), 20*time.Second)
+			announceCtx, announceCancel = context.WithTimeout(ctx, d.cfg.AnnounceTimeout)
 
 			announceResponse, err = trackerClient.Announce(announceCtx, announceRequest)
 			announceCancel()
@@ -166,7 +176,7 @@ func (d *Downloader) fetchPiece(ctx context.Context, p peer.Conn, pieceIndex int
 			}
 		}
 
-		err := p.SendRequest(uint32(pieceIndex), uint32(begin), uint32(min(16384, size-int64(begin))))
+		err := p.SendRequest(uint32(pieceIndex), uint32(begin), min(d.cfg.BlockSize, uint32(size-int64(begin))))
 		if err != nil {
 			return nil, fmt.Errorf("cannot send request: %w", err)
 		}
@@ -266,7 +276,7 @@ func (d *Downloader) run(ctx context.Context, conn peer.Conn, pieceCount int) er
 }
 
 func (d *Downloader) ConnectToPeer(ctx context.Context, peerClient *net.TCPAddr) error {
-	peerCtx, peerCancel := context.WithTimeout(ctx, 30*time.Second)
+	peerCtx, peerCancel := context.WithTimeout(ctx, d.cfg.PeerTimeout)
 	defer peerCancel()
 
 	pieceCount := len(d.torrent.Pieces) / 20

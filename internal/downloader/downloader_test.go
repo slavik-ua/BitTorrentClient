@@ -94,6 +94,7 @@ func buildDownloader(t *testing.T, rng *rand.Rand, sizes []int) (*Downloader, []
 		totalLength: total,
 		left:        total,
 		Pieces:      make([]bool, len(sizes)),
+		cfg:         Config{BlockSize: 4},
 	}
 	return d, data, dir
 }
